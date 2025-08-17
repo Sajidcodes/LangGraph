@@ -1,5 +1,5 @@
 python-dotenv
-langgraph
 langchain-core
 langchain-openai
 openai
+langgraph @ git+https://github.com/Sajidcodes/langgraph.git
