@@ -1,12 +1,15 @@
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
+
 from dotenv import load_dotenv
 load_dotenv()
 
 # loading text
 from langchain_community.document_loaders import PyPDFLoader
 
+
+pdf_url = "https://raw.githubusercontent.com/Sajidcodes/LangGraph/main/rag/DMLS.pdf"
 # returns a document object
-loader = PyPDFLoader(r'rag/DMLS.pdf')
+loader = PyPDFLoader(pdf_url)
 
 docs = loader.load()
 
@@ -47,8 +50,6 @@ embeddings = OpenAIEmbeddings()
 
 
 # ### Store in Vector Store
-
-from langchain.vectorstores import Chroma
 
 # store chunks + embeddings in chroma db
 vectorstore = Chroma.from_texts(
