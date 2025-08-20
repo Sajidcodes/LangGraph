@@ -6,7 +6,7 @@ load_dotenv()
 from langchain_community.document_loaders import PyPDFLoader
 
 # returns a document object
-loader = PyPDFLoader('/Users/sajidhussain/Desktop/Agentic AI/rag/Designing MLS.pdf')
+loader = PyPDFLoader('/Users/sajidhussain/Desktop/Agentic\\ AI/rag/DMLS.pdf')
 
 docs = loader.load()
 
