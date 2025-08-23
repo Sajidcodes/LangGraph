@@ -7,6 +7,7 @@ import streamlit as st
 from bend.langgraph_backend import chatbot
 from langchain_core.messages import HumanMessage
 import uuid
+import asyncio
 
 # **************************************** utility functions *************************
 
@@ -36,7 +37,7 @@ def load_conversation(thread_id):
 # **************************************** Session Setup ******************************
 
 if 'rag_message_history' not in st.session_state:
-    st.session_state['rag_message_history'] = []  # store RAG conversation
+    st.session_state['rag_message_history'] = []
 
 if 'rag_pipeline' not in st.session_state:
     st.session_state['rag_pipeline'] = rag_pipeline
@@ -56,23 +57,20 @@ if 'chat_names' not in st.session_state:
 if 'rag_mode' not in st.session_state:
     st.session_state['rag_mode'] = False    
 
-add_thread(st.session_state['thread_id'])  # ensure current thread exists
+add_thread(st.session_state['thread_id'])
 
 # **************************************** Sidebar UI *********************************
 
 st.sidebar.title('LangGraph Chatbot')
 
-# New Chat button
 if st.sidebar.button('New Chat'):
     reset_chat(reset_rag=True)
     st.session_state['rag_mode'] = False
 
-# RAG Workflow button starts a new chat but keeps RAG mode
 if st.sidebar.button('RAG Workflow'):
-    reset_chat(reset_rag=False)  # keep rag_mode
+    reset_chat(reset_rag=False)
     st.session_state['rag_mode'] = True
 
-# RAG / normal indicator
 if st.session_state.get('rag_mode', False):
     st.sidebar.markdown(
         "<div style='color:white; background-color:red; text-align:center; padding:5px; border-radius:5px'>RAG MODE ON</div>",
@@ -84,7 +82,6 @@ else:
         unsafe_allow_html=True
     )
 
-# Chat history in sidebar
 st.sidebar.header('Chat history')
 for i, thread_id in enumerate(st.session_state['chat_threads'][::-1]):
     name = st.session_state['chat_names'].get(thread_id, "Untitled")
@@ -104,12 +101,10 @@ for message in st.session_state['message_history']:
     with st.chat_message(message['role']):
         st.text(message['content'])
 
-# Input from user
 user_input = st.chat_input('Type here')
 
-# inside the user_input handling block
 if user_input:
-    # Save user message to normal history
+    # Add user message to chat history immediately
     st.session_state['message_history'].append({'role':'user','content':user_input})
 
     # Auto-generate chat name if still Untitled
@@ -120,52 +115,59 @@ if user_input:
     with st.chat_message('user'):
         st.text(user_input)
 
-    ai_message = ""
+    # Create placeholder for assistant message
+    placeholder = st.chat_message("assistant")
+    msg_container = placeholder.empty()
 
-    with st.chat_message('assistant'):
-        if st.session_state.get('rag_mode', False):
-            # BUILD RAG CONTEXT from previous conversation
-            rag_context = "\n".join([
-                f"User: {msg['content']}" if msg['role']=='user' else f"Assistant: {msg['content']}"
-                for msg in st.session_state['rag_message_history']
-            ])
+    if st.session_state.get('rag_mode', False):
+        # RAG context
+        rag_context = "\n".join([
+            f"User: {msg['content']}" if msg['role']=='user' else f"Assistant: {msg['content']}"
+            for msg in st.session_state['rag_message_history']
+        ])
+        query = (rag_context + "\nUser: " + user_input) if rag_context else user_input
 
-            # QUERY = previous context + current question
-            query = (rag_context + "\nUser: " + user_input) if rag_context else user_input
+        # Invoke RAG
+        results = st.session_state['rag_pipeline'].invoke(query)
 
-            # invoke RAG once
-            results = st.session_state['rag_pipeline'].invoke(query)
-
-            # format answer with source
-            if isinstance(results, list):
-                ai_message = "\n\n".join(
-                    [
-                        f"{doc.content}\n\n*(Source: {getattr(doc, 'metadata', {}).get('source', 'Unknown')})*"
-                        if hasattr(doc, 'content') else str(doc)
-                        for doc in results
-                    ]
-                )
-
-            else:
-                ai_message = str(results)
-
-            st.markdown(ai_message)
-
-            # SAVE conversation in RAG history
-            st.session_state['rag_message_history'].append({'role':'user','content':user_input})
-            st.session_state['rag_message_history'].append({'role':'assistant','content':ai_message})
-
+        # Format answer
+        if isinstance(results, list):
+            ai_message = "\n\n".join(
+                [
+                    f"{doc.content}\n\n*(Source: {getattr(doc, 'metadata', {}).get('source', 'Unknown')})*"
+                    if hasattr(doc, 'content') else str(doc)
+                    for doc in results
+                ]
+            )
         else:
-            # Normal chatbot
-            CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}
-            ai_message = "".join([
-                message_chunk.content for message_chunk, _ in chatbot.stream(
-                    {'messages':[HumanMessage(content=user_input)]},
-                    config=CONFIG,
-                    stream_mode='messages'
-                )
-            ])
-            st.text(ai_message)
+            ai_message = str(results)
 
-        # Save assistant message in normal chat history
+        # Display immediately
+        msg_container.text(ai_message)
+
+        # Save to RAG history
+        st.session_state['rag_message_history'].append({'role':'user','content':user_input})
+        st.session_state['rag_message_history'].append({'role':'assistant','content':ai_message})
+
+        # Save to normal chat history
+        st.session_state['message_history'].append({'role':'assistant','content':ai_message})
+
+    else:
+        # Normal streaming
+        CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}
+
+        async def run_stream():
+            ai_message = ""
+            async for message_chunk, _ in chatbot.astream(
+                {"messages": [HumanMessage(content=user_input)]},
+                config=CONFIG,
+                stream_mode="messages",
+            ):
+                ai_message += message_chunk.content
+                msg_container.markdown(ai_message)
+            return ai_message
+
+        ai_message = asyncio.run(run_stream())
+
+        # Save to normal chat history
         st.session_state['message_history'].append({'role':'assistant','content':ai_message})
